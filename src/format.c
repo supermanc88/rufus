@@ -1,8 +1,8 @@
 /*
  * Rufus: The Reliable USB Formatting Utility
  * Formatting function calls
- * Copyright © 2007-2009 Tom Thornhill/Ridgecrop
- * Copyright © 2011-2018 Pete Batard <pete@akeo.ie>
+ * Copyright 漏 2007-2009 Tom Thornhill/Ridgecrop
+ * Copyright 漏 2011-2018 Pete Batard <pete@akeo.ie>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1045,7 +1045,7 @@ static BOOL WriteSBR(HANDLE hPhysicalDrive)
 	case BT_GRUB2:
 		if (grub2_buf != NULL) {
 			uprintf("Writing Grub 2.0 SBR (from download) %s",
-				IsBufferInDB(grub2_buf, grub2_len)?"✓":"✗");
+				IsBufferInDB(grub2_buf, grub2_len)?"1":"0");
 			buf = grub2_buf;
 			size = (DWORD)grub2_len;
 		} else {
@@ -2010,7 +2010,7 @@ DWORD WINAPI FormatThread(void* param)
 			grub4dos_dst[0] = drive_name[0];
 			IGNORE_RETVAL(_chdirU(app_dir));
 			uprintf("Installing: %s (Grub4DOS loader) %s\n", grub4dos_dst,
-				IsFileInDB(FILES_DIR "\\grub4dos-" GRUB4DOS_VERSION "\\grldr")?"✓":"✗");
+				IsFileInDB(FILES_DIR "\\grub4dos-" GRUB4DOS_VERSION "\\grldr")? "1" : "0");
 			if (!CopyFileU(FILES_DIR "\\grub4dos-" GRUB4DOS_VERSION "\\grldr", grub4dos_dst, FALSE))
 				uprintf("Failed to copy file: %s", WindowsErrorString());
 		} else if ((bt == BT_IMAGE) && (image_path != NULL) && (img_report.is_iso)) {

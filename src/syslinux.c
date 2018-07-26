@@ -180,7 +180,7 @@ BOOL InstallSyslinux(DWORD drive_index, char drive_letter, int fs_type)
 				goto out;
 			}
 			uprintf("Using existing './%s' %s", path,
-				IsBufferInDB(syslinux_ldlinux[i], (size_t)syslinux_ldlinux_len[i])?"✓":"✗");
+				IsBufferInDB(syslinux_ldlinux[i], (size_t)syslinux_ldlinux_len[i])? "1" : "0");
 		}
 	} else {
 		for (i=0; i<2; i++) {
@@ -340,7 +340,7 @@ BOOL InstallSyslinux(DWORD drive_index, char drive_letter, int fs_type)
 			fclose(fd);
 			if (CopyFileU(&path[3], path, TRUE)) {
 				uprintf("Created '%s' (from '%s/%s-%s/%s') %s", path, FILES_DIR, syslinux,
-					embedded_sl_version_str[1], &path[3], IsFileInDB(&path[3])?"✓":"✗");
+					embedded_sl_version_str[1], &path[3], IsFileInDB(&path[3])? "1" : "0");
 			} else {
 				uprintf("Failed to create '%s': %s", path, WindowsErrorString());
 			}

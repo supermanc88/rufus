@@ -1156,10 +1156,16 @@ BOOL CreatePartition(HANDLE hDrive, int partition_style, int file_system, BOOL m
 				DriveLayoutEx.PartitionEntry[pn-1].PartitionLength.QuadPart;
 	}
 
+#ifndef _CHM_
 	// Set our main data partition
 	main_part_size_in_sectors = (SelectedDrive.DiskSize - DriveLayoutEx.PartitionEntry[pn].StartingOffset.QuadPart) /
 		// Need 33 sectors at the end for secondary GPT
-		SelectedDrive.SectorSize - ((partition_style == PARTITION_STYLE_GPT)?33:0);
+		SelectedDrive.SectorSize - ((partition_style == PARTITION_STYLE_GPT) ? 33 : 0);
+#else
+	// chengheming 这里修改格式化大小为10M
+	main_part_size_in_sectors = 10 * 1024 * 1024 / 512;
+#endif
+
 	if (main_part_size_in_sectors <= 0)
 		return FALSE;
 

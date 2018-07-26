@@ -37,13 +37,13 @@
 #define COMPANY_NAME                "Akeo Consulting"
 #define STR_NO_LABEL                "NO_LABEL"
 // Yes, there exist characters between these seemingly empty quotes!
-#define LEFT_TO_RIGHT_MARK          "‎"
-#define RIGHT_TO_LEFT_MARK          "‏"
-#define LEFT_TO_RIGHT_EMBEDDING     "‪"
-#define RIGHT_TO_LEFT_EMBEDDING     "‫"
-#define POP_DIRECTIONAL_FORMATTING  "‬"
-#define LEFT_TO_RIGHT_OVERRIDE      "‭"
-#define RIGHT_TO_LEFT_OVERRIDE      "‮"
+#define LEFT_TO_RIGHT_MARK          ""
+#define RIGHT_TO_LEFT_MARK          ""
+#define LEFT_TO_RIGHT_EMBEDDING     ""
+#define RIGHT_TO_LEFT_EMBEDDING     ""
+#define POP_DIRECTIONAL_FORMATTING  ""
+#define LEFT_TO_RIGHT_OVERRIDE      ""
+#define RIGHT_TO_LEFT_OVERRIDE      ""
 #define DRIVE_ACCESS_TIMEOUT        15000		// How long we should retry drive access (in ms)
 #define DRIVE_ACCESS_RETRIES        150			// How many times we should retry
 #define DRIVE_INDEX_MIN             0x00000080
