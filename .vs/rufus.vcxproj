@@ -323,8 +323,8 @@
     <ClCompile Include="..\src\badblocks.c" />
     <ClCompile Include="..\src\dos_locale.c" />
     <ClCompile Include="..\src\drive.c" />
-    <ClCompile Include="..\src\format.c" />
     <ClCompile Include="..\src\dos.c" />
+    <ClCompile Include="..\src\format.c" />
     <ClCompile Include="..\src\icon.c" />
     <ClCompile Include="..\src\iso.c" />
     <ClCompile Include="..\src\localization.c" />
