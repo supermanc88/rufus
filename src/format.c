@@ -871,11 +871,12 @@ out:
 	return r;
 }
 
-
+#pragma pack(1)
 typedef struct _FILEDISK_VERIFY_					//磁盘开始的512字节用于校验是否被改动
 {
-	BYTE code[508];
-	ULONG32 verifyCode;
+	BYTE				code[500];
+	ULONGLONG			diskSize;
+	ULONG32				verifyCode;
 }FILEDISK_VERIFY, *PFILEDISK_VERIFY;
 
 static const ULONG32 crc32tab[] = {
@@ -980,9 +981,11 @@ BOOL WriteModifySector(HANDLE hPhysicalDrive)
 		bufferSec[i] = rand() / 0xFF;
 	}
 
+	PFILEDISK_VERIFY filedisk_verify = (PFILEDISK_VERIFY)bufferSec;
+	filedisk_verify->diskSize = SelectedDrive.DiskSize;				//把u盘的大小直接写到记录里
 
 	DWORD verifyCode = crc32(bufferSec, 508);
-	PFILEDISK_VERIFY filedisk_verify = (PFILEDISK_VERIFY)bufferSec;
+	
 	filedisk_verify->verifyCode = verifyCode;
 
 

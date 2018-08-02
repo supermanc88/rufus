@@ -110,7 +110,7 @@ HWND hDeviceList, hPartitionScheme, hTargetSystem, hFileSystem, hClusterSize, hL
 HWND hLogDialog = NULL, hProgress = NULL, hDiskID;
 BOOL use_own_c32[NB_OLD_C32] = {FALSE, FALSE}, mbr_selected_by_user = FALSE, display_togo_option = FALSE;
 BOOL iso_op_in_progress = FALSE, format_op_in_progress = FALSE, right_to_left_mode = FALSE, has_uefi_csm;
-BOOL enable_HDDs = FALSE, force_update = FALSE, enable_ntfs_compression = FALSE, no_confirmation_on_cancel = FALSE, lock_drive = TRUE;
+BOOL enable_HDDs = TRUE, force_update = FALSE, enable_ntfs_compression = FALSE, no_confirmation_on_cancel = FALSE, lock_drive = TRUE;
 BOOL advanced_mode_device, advanced_mode_format, allow_dual_uefi_bios, detect_fakes, enable_vmdk, force_large_fat32, usb_debug;
 BOOL use_fake_units, preserve_timestamps = FALSE;
 BOOL zero_drive = FALSE, list_non_usb_removable_drives = FALSE, enable_file_indexing, large_drive = FALSE, write_as_image = FALSE;
@@ -223,25 +223,25 @@ static void SetBootOptions(void)
 
 	IGNORE_RETVAL(ComboBox_ResetContent(hBootType));
 	IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, lmprintf(MSG_279)), BT_NON_BOOTABLE));
-	if (nWindowsVersion < WINDOWS_10)	// The diskcopy.dll along with its MS-DOS floppy image was removed in Windows 10
-		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, "MS-DOS"), BT_MSDOS));
-	IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, "FreeDOS"), BT_FREEDOS));
-	image_index = (nWindowsVersion < WINDOWS_10) ? 3 : 2;
-	IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType,
-		(image_path == NULL) ? lmprintf(MSG_281, lmprintf(MSG_280)) : short_image_path), BT_IMAGE));
-
-	if (advanced_mode_device) {
-		static_sprintf(tmp, "Syslinux %s", embedded_sl_version_str[0]);
-		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, tmp), BT_SYSLINUX_V4));
-		static_sprintf(tmp, "Syslinux %s", embedded_sl_version_str[1]);
-		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, tmp), BT_SYSLINUX_V6));
-		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, "ReactOS"), BT_REACTOS));
-		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType,
-			"Grub " GRUB2_PACKAGE_VERSION), BT_GRUB2));
-		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType,
-			"Grub4DOS " GRUB4DOS_VERSION), BT_GRUB4DOS));
-		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, "UEFI:NTFS"), BT_UEFI_NTFS));
-	}
+// 	if (nWindowsVersion < WINDOWS_10)	// The diskcopy.dll along with its MS-DOS floppy image was removed in Windows 10
+// 		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, "MS-DOS"), BT_MSDOS));
+// 	IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, "FreeDOS"), BT_FREEDOS));
+// 	image_index = (nWindowsVersion < WINDOWS_10) ? 3 : 2;
+// 	IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType,
+// 		(image_path == NULL) ? lmprintf(MSG_281, lmprintf(MSG_280)) : short_image_path), BT_IMAGE));
+// 
+// 	if (advanced_mode_device) {
+// 		static_sprintf(tmp, "Syslinux %s", embedded_sl_version_str[0]);
+// 		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, tmp), BT_SYSLINUX_V4));
+// 		static_sprintf(tmp, "Syslinux %s", embedded_sl_version_str[1]);
+// 		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, tmp), BT_SYSLINUX_V6));
+// 		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, "ReactOS"), BT_REACTOS));
+// 		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType,
+// 			"Grub " GRUB2_PACKAGE_VERSION), BT_GRUB2));
+// 		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType,
+// 			"Grub4DOS " GRUB4DOS_VERSION), BT_GRUB4DOS));
+// 		IGNORE_RETVAL(ComboBox_SetItemData(hBootType, ComboBox_AddStringU(hBootType, "UEFI:NTFS"), BT_UEFI_NTFS));
+// 	}
 	if ((!advanced_mode_device) && (selection_default >= BT_SYSLINUX_V4)) {
 		selection_default = BT_IMAGE;
 		CheckDlgButton(hMainDialog, IDC_DISK_ID, BST_UNCHECKED);
@@ -2658,7 +2658,8 @@ static void InitDialog(HWND hDlg)
 	StrArrayCreate(&ImageList, 16);
 	// Set various checkboxes
 	CheckDlgButton(hDlg, IDC_QUICK_FORMAT, BST_CHECKED);
-	CheckDlgButton(hDlg, IDC_EXTENDED_LABEL, BST_CHECKED);
+// 	CheckDlgButton(hDlg, IDC_EXTENDED_LABEL, BST_CHECKED);			格式化不需要更改图标
+
 
 	CreateAdditionalControls(hDlg);
 	SetSectionHeaders(hDlg);
@@ -2709,6 +2710,9 @@ static void InitDialog(HWND hDlg)
 	SetBootTypeDropdownWidth();
 
 	PrintInfo(0, MSG_210);
+
+	CheckDlgButton(hDlg, IDC_LIST_USB_HDD, BST_CHECKED);    //添加自动勾选显示外接usb硬盘
+
 }
 
 static void PrintStatusTimeout(const char* str, BOOL val)
@@ -3236,10 +3240,10 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 			if (format_thid != NULL)
 				return (INT_PTR)TRUE;
 			// Just in case
-			bt = (int)ComboBox_GetItemData(hBootType, ComboBox_GetCurSel(hBootType));
-			pt = (int)ComboBox_GetItemData(hPartitionScheme, ComboBox_GetCurSel(hPartitionScheme));
-			tt = (int)ComboBox_GetItemData(hTargetSystem, ComboBox_GetCurSel(hTargetSystem));
-			fs = (int)ComboBox_GetItemData(hFileSystem, ComboBox_GetCurSel(hFileSystem));
+			bt = (int)ComboBox_GetItemData(hBootType, ComboBox_GetCurSel(hBootType));							//引导类型
+			pt = (int)ComboBox_GetItemData(hPartitionScheme, ComboBox_GetCurSel(hPartitionScheme));				//分区类型
+			tt = (int)ComboBox_GetItemData(hTargetSystem, ComboBox_GetCurSel(hTargetSystem));					//目标系统类型
+			fs = (int)ComboBox_GetItemData(hFileSystem, ComboBox_GetCurSel(hFileSystem));						//文件系统类型
 			write_as_image = FALSE;
 			// Disable all controls except Cancel
 			EnableControls(FALSE);
@@ -3439,7 +3443,7 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		fScale = GetDeviceCaps(hDC, LOGPIXELSX) / 96.0f;
 		safe_release_dc(hDlg, hDC);
 		apply_localization(IDD_DIALOG, hDlg);
-		SetUpdateCheck();
+// 		SetUpdateCheck();											//不进行更新检查
 		display_togo_option = TRUE;	// We display the ToGo controls by default and need to hide them
 		first_log_display = TRUE;
 		log_displayed = FALSE;
@@ -3447,7 +3451,7 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		InitDialog(hDlg);
 		GetDevices(0);
 		EnableControls(TRUE);
-		CheckForUpdates(FALSE);
+// 		CheckForUpdates(FALSE);
 		// Register MEDIA_INSERTED/MEDIA_REMOVED notifications for card readers
 		if (SUCCEEDED(SHGetSpecialFolderLocation(0, CSIDL_DESKTOP, &pidlDesktop))) {
 			NotifyEntry.pidl = pidlDesktop;
