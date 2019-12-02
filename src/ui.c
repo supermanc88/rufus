@@ -1,7 +1,7 @@
 /*
  * Rufus: The Reliable USB Formatting Utility
  * UI-related function calls
- * Copyright © 2018 Pete Batard <pete@akeo.ie>
+ * Copyright © 2018-2019 Pete Batard <pete@akeo.ie>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,6 +43,8 @@
 
 UINT_PTR UM_LANGUAGE_MENU_MAX = UM_LANGUAGE_MENU;
 HIMAGELIST hUpImageList, hDownImageList;
+extern BOOL enable_fido, use_vds;
+int update_progress_type = UPT_PERCENT;
 int advanced_device_section_height, advanced_format_section_height;
 // (empty) check box width, (empty) drop down width, button height (for and without dropdown match)
 int cbw, ddw, ddbh = 0, bh = 0;
@@ -68,14 +70,17 @@ static float previous_end;
 // Set the combo selection according to the data
 void SetComboEntry(HWND hDlg, int data)
 {
-	int i;
-	for (i = 0; i < ComboBox_GetCount(hDlg); i++) {
+	int i, nb_entries = ComboBox_GetCount(hDlg);
+
+	if (nb_entries <= 0)
+		return;
+	for (i = 0; i < nb_entries; i++) {
 		if (ComboBox_GetItemData(hDlg, i) == data) {
 			IGNORE_RETVAL(ComboBox_SetCurSel(hDlg, i));
-			break;
+			return;
 		}
 	}
-	if (i == ComboBox_GetCount(hDlg))
+	if (i == nb_entries)
 		IGNORE_RETVAL(ComboBox_SetCurSel(hDlg, 0));
 }
 
@@ -144,15 +149,28 @@ void GetMainButtonsWidth(HWND hDlg)
 {
 	unsigned int i;
 	RECT rc;
+	LONG style;
+	char download[64];
 
 	GetWindowRect(GetDlgItem(hDlg, main_button_ids[0]), &rc);
 	MapWindowPoints(NULL, hDlg, (POINT*)&rc, 2);
 	bw = rc.right - rc.left;
 
-	for (i = 0; i < ARRAYSIZE(main_button_ids); i++)
-		bw = max(bw, GetTextWidth(hDlg, main_button_ids[i]) + cbw);
-	// The 'CLOSE' button is also be used to display 'CANCEL' => measure that too
+	for (i = 0; i < ARRAYSIZE(main_button_ids); i++) {
+		// Make sure we add extra space for the SELECT split button (i == 0) if Fido is enabled
+		bw = max(bw, GetTextWidth(hDlg, main_button_ids[i]) + ((enable_fido && i == 0) ? (3 * cbw) / 2 : cbw));
+	}
+	// The 'CLOSE' button is also be used to display 'CANCEL' and we sometimes
+	// want to add "DOWNLOAD" into the Select split button => measure that too.
 	bw = max(bw, GetTextSize(GetDlgItem(hDlg, IDCANCEL), lmprintf(MSG_007)).cx + cbw);
+	if (enable_fido) {
+		static_strcpy(download, lmprintf(MSG_040));
+		CharUpperBuffU(download, sizeof(download));
+		bw = max(bw, GetTextSize(GetDlgItem(hDlg, IDC_SELECT), download).cx + (3 * cbw) / 2);
+		style = GetWindowLong(GetDlgItem(hDlg, IDC_SELECT), GWL_STYLE);
+		style|= BS_SPLITBUTTON;
+		SetWindowLong(GetDlgItem(hDlg, IDC_SELECT), GWL_STYLE, style);
+	}
 }
 
 // The following goes over the data that gets populated into the half-width dropdowns
@@ -578,6 +596,9 @@ void ToggleAdvancedDeviceOptions(BOOL enable)
 	GetWindowRect(hAdvancedDeviceToolbar, &rc);
 	MapWindowPoints(NULL, hMainDialog, (POINT*)&rc, 2);
 	SendMessage(hAdvancedDeviceToolbar, TB_GETIDEALSIZE, (WPARAM)FALSE, (LPARAM)&sz);
+	// TB_GETIDEALSIZE may act up and report negative values
+	if (sz.cx < 16)
+		sz.cx = fw;
 	SetWindowPos(hAdvancedDeviceToolbar, hTargetSystem, rc.left, rc.top, sz.cx, rc.bottom - rc.top, 0);
 
 	// Move the controls up or down
@@ -620,6 +641,8 @@ void ToggleAdvancedFormatOptions(BOOL enable)
 	GetWindowRect(hAdvancedFormatToolbar, &rc);
 	MapWindowPoints(NULL, hMainDialog, (POINT*)&rc, 2);
 	SendMessage(hAdvancedFormatToolbar, TB_GETIDEALSIZE, (WPARAM)FALSE, (LPARAM)&sz);
+	if (sz.cx < 16)
+		sz.cx = fw;
 	SetWindowPos(hAdvancedFormatToolbar, hClusterSize, rc.left, rc.top, sz.cx, rc.bottom - rc.top, 0);
 
 	// Move the controls up or down
@@ -642,16 +665,17 @@ void TogglePersistenceControls(BOOL display)
 {
 	RECT rc;
 	HWND hSize, hUnits;
-	LONG style, width = fw - bsw - ssw;
+	LONG_PTR style;
+	LONG width = fw - bsw - ssw;
 	hSize = GetDlgItem(hMainDialog, IDC_PERSISTENCE_SIZE);
 	hUnits = GetDlgItem(hMainDialog, IDC_PERSISTENCE_UNITS);
 
-	style = GetWindowLong(hSize, GWL_EXSTYLE);
+	style = GetWindowLongPtr(hSize, GWL_EXSTYLE);
 	if (display)
 		style |= WS_EX_RIGHT;
 	else
 		style &= ~WS_EX_RIGHT;
-	SetWindowLong(hSize, GWL_EXSTYLE, style);
+	SetWindowLongPtr(hSize, GWL_EXSTYLE, style);
 
 	if (display) {
 		GetWindowRect(hUnits, &rc);
@@ -668,48 +692,66 @@ void TogglePersistenceControls(BOOL display)
 	ShowWindow(hUnits, display ? SW_SHOW : SW_HIDE);
 }
 
-void SetPersistenceSize(uint64_t pos, uint64_t max)
+void SetPersistencePos(uint64_t pos)
 {
 	char tmp[64];
-	int i, proposed_unit_selection = 0;
-	LONGLONG base_unit = MB;
-	HWND hCtrl;
 
-	// Reset the the Persistence Units dropdown
-	hCtrl = GetDlgItem(hMainDialog, IDC_PERSISTENCE_UNITS);
-	IGNORE_RETVAL(ComboBox_ResetContent(hCtrl));
-	for (i = 0; i < 3; i++) {
-		IGNORE_RETVAL(ComboBox_SetItemData(hCtrl, ComboBox_AddStringU(hCtrl, lmprintf(MSG_022 + i)), i));
-		// If we have more than 7 discrete positions, set this unit as our base
-		if (SelectedDrive.DiskSize > 7 * base_unit)
-			proposed_unit_selection = i;
-		base_unit *= 1024;
-		// Don't allow a base unit unless the drive is at least twice the size of that unit
-		if (SelectedDrive.DiskSize < 2 * base_unit)
-			break;
-	}
-	if (persistence_unit_selection < 0)
-		persistence_unit_selection = proposed_unit_selection;
-
-	IGNORE_RETVAL(ComboBox_SetCurSel(hCtrl, persistence_unit_selection));
-	pos /= MB;
-	max /= MB;
-	for (i = 0; i < persistence_unit_selection; i++) {
-		pos /= 1024;
-		max /= 1024;
-	}
-
-	hCtrl = GetDlgItem(hMainDialog, IDC_PERSISTENCE_SLIDER);
-	SendMessage(hCtrl, TBM_SETRANGEMIN, (WPARAM)FALSE, (LPARAM)0);
-	SendMessage(hCtrl, TBM_SETRANGEMAX, (WPARAM)FALSE, (LPARAM)max);
-	SendMessage(hCtrl, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)pos);
-	if (pos != 0) {
+	if ((boot_type == BT_IMAGE) && (pos != 0)) {
+		TogglePersistenceControls(TRUE);
 		static_sprintf(tmp, "%ld", (LONG)pos);
 	} else {
+		TogglePersistenceControls(FALSE);
 		static_sprintf(tmp, "0 (%s)", lmprintf(MSG_124));
 	}
 	app_changed_size = TRUE;
 	SetWindowTextU(GetDlgItem(hMainDialog, IDC_PERSISTENCE_SIZE), tmp);
+}
+
+void SetPersistenceSize(void)
+{
+	int i, proposed_unit_selection = 0;
+	LONGLONG base_unit = MB;
+	HWND hCtrl;
+	uint64_t max = 0, pos = 0;
+
+	if (ComboBox_GetCurSel(hDeviceList) >= 0) {
+		max = SelectedDrive.DiskSize - img_report.projected_size;
+		persistence_size = min(persistence_size, max);
+		pos = persistence_size;
+
+		// Reset the the Persistence Units dropdown
+		hCtrl = GetDlgItem(hMainDialog, IDC_PERSISTENCE_UNITS);
+		IGNORE_RETVAL(ComboBox_ResetContent(hCtrl));
+		for (i = 0; i < 3; i++) {
+			IGNORE_RETVAL(ComboBox_SetItemData(hCtrl, ComboBox_AddStringU(hCtrl, lmprintf(MSG_022 + i)), i));
+			// If we have more than 7 discrete positions, set this unit as our base
+			if (SelectedDrive.DiskSize > 7 * base_unit)
+				proposed_unit_selection = i;
+			base_unit *= 1024;
+			// Don't allow a base unit unless the drive is at least twice the size of that unit
+			if (SelectedDrive.DiskSize < 2 * base_unit)
+				break;
+		}
+		if (persistence_unit_selection < 0)
+			persistence_unit_selection = proposed_unit_selection;
+
+		IGNORE_RETVAL(ComboBox_SetCurSel(hCtrl, persistence_unit_selection));
+		pos /= MB;
+		max /= MB;
+		for (i = 0; i < persistence_unit_selection; i++) {
+			pos /= 1024;
+			max /= 1024;
+		}
+	}
+
+	hCtrl = GetDlgItem(hMainDialog, IDC_PERSISTENCE_SLIDER);
+	// Wow! Unless you set *all* these redraw WPARAMs to true, the one from
+	// TBM_SETPOS gets completely ignored if the value is zero!
+	SendMessage(hCtrl, TBM_SETRANGEMIN, (WPARAM)TRUE, (LPARAM)0);
+	SendMessage(hCtrl, TBM_SETRANGEMAX, (WPARAM)TRUE, (LPARAM)max);
+	SendMessage(hCtrl, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)pos);
+
+	SetPersistencePos(pos);
 }
 
 // Toggle the Image Option dropdown (Windows To Go or persistence settings)
@@ -719,8 +761,8 @@ void ToggleImageOptions(void)
 	uint8_t entry_image_options = image_options;
 	int i, shift = rh;
 
-	has_wintogo = ((bt == BT_IMAGE) && (image_path != NULL) && (img_report.is_iso) && (nWindowsVersion >= WINDOWS_8) && (HAS_WINTOGO(img_report)));
-	has_persistence = ((bt == BT_IMAGE) && (image_path != NULL) && (img_report.is_iso) && (HAS_PERSISTENCE(img_report)));
+	has_wintogo = ((boot_type == BT_IMAGE) && (image_path != NULL) && (img_report.is_iso) && (nWindowsVersion >= WINDOWS_8) && (HAS_WINTOGO(img_report)));
+	has_persistence = ((boot_type == BT_IMAGE) && (image_path != NULL) && (img_report.is_iso) && (HAS_PERSISTENCE(img_report)));
 
 	assert(popcnt8(image_options) <= 1);
 
@@ -769,7 +811,7 @@ void ToggleImageOptions(void)
 	} else if (image_options & IMOP_PERSISTENCE) {
 		SetWindowTextU(GetDlgItem(hMainDialog, IDS_IMAGE_OPTION_TXT), lmprintf(MSG_123));
 		TogglePersistenceControls(persistence_size != 0);
-		SetPersistenceSize(persistence_size, SelectedDrive.DiskSize - img_report.projected_size);
+		SetPersistenceSize();
 	}
 	// If you don't force a redraw here, all kind of bad UI artifacts happen...
 	InvalidateRect(hMainDialog, NULL, TRUE);
@@ -852,6 +894,7 @@ static INT_PTR CALLBACK ProgressCallback(HWND hCtrl, UINT message, WPARAM wParam
 		return (INT_PTR)TRUE;
 
 	case PBM_SETRANGE:
+		CallWindowProc(progress_original_proc, hCtrl, message, wParam, lParam);
 		// Don't bother sanity checking min and max: If *you* want to
 		// be an ass about the progress bar range, it's *your* problem.
 		min = (uint32_t)(lParam & 0xFFFF);
@@ -859,11 +902,13 @@ static INT_PTR CALLBACK ProgressCallback(HWND hCtrl, UINT message, WPARAM wParam
 		return (INT_PTR)TRUE;
 
 	case PBM_SETPOS:
+		CallWindowProc(progress_original_proc, hCtrl, message, wParam, lParam);
 		pos = (WORD)wParam;
 		InvalidateRect(hProgress, NULL, TRUE);
 		return (INT_PTR)TRUE;
 
 	case PBM_SETMARQUEE:
+		CallWindowProc(progress_original_proc, hCtrl, message, wParam, lParam);
 		if ((wParam == TRUE) && (!marquee_mode)) {
 			marquee_mode = TRUE;
 			pos = min;
@@ -1109,20 +1154,20 @@ void InitProgress(BOOL bOnlyFormat)
 		if (IsChecked(IDC_BAD_BLOCKS)) {
 			nb_slots[OP_BADBLOCKS] = -1;
 		}
-		if (bt != BT_NON_BOOTABLE) {
+		if (boot_type != BT_NON_BOOTABLE) {
 			// 1 extra slot for PBR writing
 			switch (selection_default) {
 			case BT_MSDOS:
-				nb_slots[OP_DOS] = 3 + 1;
+				nb_slots[OP_FILE_COPY] = 3 + 1;
 				break;
 			case BT_FREEDOS:
-				nb_slots[OP_DOS] = 5 + 1;
+				nb_slots[OP_FILE_COPY] = 5 + 1;
 				break;
 			case BT_IMAGE:
-				nb_slots[OP_DOS] = img_report.is_iso ? -1 : 0;
+				nb_slots[OP_FILE_COPY] = img_report.is_iso ? -1 : 0;
 				break;
 			default:
-				nb_slots[OP_DOS] = 2 + 1;
+				nb_slots[OP_FILE_COPY] = 2 + 1;
 				break;
 			}
 		}
@@ -1132,17 +1177,21 @@ void InitProgress(BOOL bOnlyFormat)
 			nb_slots[OP_ZERO_MBR] = 1;
 			nb_slots[OP_PARTITION] = 1;
 			nb_slots[OP_FIX_MBR] = 1;
-			nb_slots[OP_CREATE_FS] =
+			nb_slots[OP_CREATE_FS] = (use_vds) ? 2 :
 				nb_steps[ComboBox_GetItemData(hFileSystem, ComboBox_GetCurSel(hFileSystem))];
-			if ((!IsChecked(IDC_QUICK_FORMAT))
-				|| ((fs == FS_FAT32) && ((SelectedDrive.DiskSize >= LARGE_FAT32_SIZE) || (force_large_fat32)))) {
+			// So, yeah, if you're doing slow format, or using Large FAT32, and have persistence, you'll see
+			// the progress bar revert during format on account that we reuse the same operation for both
+			// partitions. Maybe one day I'll be bothered to handle two separate OP_FORMAT ops...
+			if ((!IsChecked(IDC_QUICK_FORMAT)) || (persistence_size != 0) || (fs_type >= FS_EXT2) ||
+				((fs_type == FS_FAT32) && ((SelectedDrive.DiskSize >= LARGE_FAT32_SIZE) || (force_large_fat32)))) {
 				nb_slots[OP_FORMAT] = -1;
+				nb_slots[OP_CREATE_FS] = 0;
 			}
-			nb_slots[OP_FINALIZE] = ((selection_default == BT_IMAGE) && (fs == FS_NTFS)) ? 3 : 2;
+			nb_slots[OP_FINALIZE] = ((selection_default == BT_IMAGE) && (fs_type == FS_NTFS)) ? 3 : 2;
 		}
 	}
 
-	for (i = 0; i<OP_MAX; i++) {
+	for (i = 0; i < OP_MAX; i++) {
 		if (nb_slots[i] > 0) {
 			slots_discrete += nb_slots[i] * 1.0f;
 		}
@@ -1151,7 +1200,7 @@ void InitProgress(BOOL bOnlyFormat)
 		}
 	}
 
-	for (i = 0; i<OP_MAX; i++) {
+	for (i = 0; i < OP_MAX; i++) {
 		if (nb_slots[i] == 0) {
 			slot_end[i + 1] = last_end;
 		} else if (nb_slots[i] > 0) {
@@ -1164,7 +1213,7 @@ void InitProgress(BOOL bOnlyFormat)
 
 	// If there's no analog, adjust our discrete ends to fill the whole bar
 	if (slots_analog == 0.0f) {
-		for (i = 0; i<OP_MAX; i++) {
+		for (i = 0; i < OP_MAX; i++) {
 			slot_end[i + 1] *= 100.0f / slots_discrete;
 		}
 	}
@@ -1181,7 +1230,7 @@ void UpdateProgress(int op, float percent)
 		return;
 	}
 	if (percent > 100.1f) {
-		//		duprintf("UpdateProgress(%d): invalid percentage %0.2f\n", op, percent);
+		// duprintf("UpdateProgress(%d): invalid percentage %0.2f\n", op, percent);
 		return;
 	}
 	if ((percent < 0.0f) && (nb_slots[op] <= 0)) {
@@ -1202,7 +1251,7 @@ void UpdateProgress(int op, float percent)
 		pos = (int)((previous_end + ((slot_end[op + 1] - previous_end) * (percent / 100.0f))) / 100.0f * MAX_PROGRESS);
 	}
 	if (pos > MAX_PROGRESS) {
-		duprintf("UpdateProgress(%d): rounding error - pos %d is greater than %d\n", op, pos, MAX_PROGRESS);
+		duprintf("UpdateProgress(%d): rounding error - pos %d is greater than %d", op, pos, MAX_PROGRESS);
 		pos = MAX_PROGRESS;
 	}
 
@@ -1211,6 +1260,232 @@ void UpdateProgress(int op, float percent)
 		LastRefresh = GetTickCount64();
 		SendMessage(hProgress, PBM_SETPOS, (WPARAM)pos, 0);
 		SetTaskbarProgressValue(pos, MAX_PROGRESS);
+	}
+}
+
+/*
+ * The following is taken from GNU wget (progress.c)
+ */
+struct bar_progress {
+	uint64_t total_length;          // expected total byte count when the download finishes
+	uint64_t count;                 // bytes downloaded so far
+	uint64_t last_screen_update;    // time of the last screen update, measured since the beginning of download.
+	uint64_t dltime;                // download time so far
+	// Keep track of recent download speeds.
+	struct bar_progress_hist {
+		uint64_t pos;
+		uint64_t times[SPEED_HISTORY_SIZE];
+		uint64_t bytes[SPEED_HISTORY_SIZE];
+		// The sum of times and bytes respectively, maintained for efficiency.
+		uint64_t total_time;
+		uint64_t total_bytes;
+	} hist;
+	uint64_t recent_start;          // timestamp of beginning of current position.
+	uint64_t recent_bytes;          // bytes downloaded so far.
+	BOOL stalled;                   // set when no data arrives for longer than STALL_START_TIME, then reset when new data arrives.
+
+	// The following are used to make sure that ETA information doesn't flicker.
+	uint64_t last_eta_time;         // time of the last update to download speed and ETA, measured since the beginning of download.
+	int last_eta_value;
+};
+
+// This code attempts to maintain the notion of a "current" download speed, over the course
+// of no less than 3s. (Shorter intervals produce very erratic results.)
+//
+// To do so, it samples the speed in 150ms intervals and stores the recorded samples in a
+// FIFO history ring. The ring stores no more than 20 intervals, hence the history covers
+// the period of at least three seconds and at most 20 reads into the past. This method
+// should produce reasonable results for downloads ranging from very slow to very fast.
+//
+// The idea is that for fast downloads, we get the speed over exactly the last three seconds.
+// For slow downloads (where a network read takes more than 150ms to complete), we get the
+// speed over a larger time period, as large as it takes to complete twenty reads. This is
+// good because slow downloads tend to fluctuate more and a 3-second average would be too
+// erratic.
+static void bar_update(struct bar_progress* bp, uint64_t howmuch, uint64_t dltime)
+{
+	struct bar_progress_hist* hist = &bp->hist;
+	uint64_t recent_age = dltime - bp->recent_start;
+
+	// Update the download count.
+	bp->recent_bytes += howmuch;
+
+	// For very small time intervals, we return after having updated the
+	// "recent" download count. When its age reaches or exceeds minimum
+	// sample time, it will be recorded in the history ring.
+	if (recent_age < SPEED_SAMPLE_MIN)
+		return;
+
+	if (howmuch == 0) {
+		// If we're not downloading anything, we might be stalling,
+		// i.e. not downloading anything for an extended period of time.
+		// Since 0-reads do not enter the history ring, recent_age
+		// effectively measures the time since last read.
+		if (recent_age >= STALL_START_TIME) {
+			// If we're stalling, reset the ring contents because it's
+			// stale and because it will make bar_update stop printing
+			// the (bogus) current bandwidth.
+			bp->stalled = TRUE;
+			memset(hist, 0, sizeof(struct bar_progress_hist));
+			bp->recent_bytes = 0;
+		}
+		return;
+	}
+
+	// We now have a non-zero amount of to store to the speed ring.
+
+	// If the stall status was acquired, reset it.
+	if (bp->stalled) {
+		bp->stalled = FALSE;
+		// "recent_age" includes the entire stalled period, which
+		// could be very long. Don't update the speed ring with that
+		// value because the current bandwidth would start too small.
+		// Start with an arbitrary (but more reasonable) time value and
+		// let it level out.
+		recent_age = 1000;
+	}
+
+	// Store "recent" bytes and download time to history ring at the position POS.
+
+	// To correctly maintain the totals, first invalidate existing data
+	// (least recent in time) at this position. */
+	hist->total_time -= hist->times[hist->pos];
+	hist->total_bytes -= hist->bytes[hist->pos];
+
+	// Now store the new data and update the totals.
+	hist->times[hist->pos] = recent_age;
+	hist->bytes[hist->pos] = bp->recent_bytes;
+	hist->total_time += recent_age;
+	hist->total_bytes += bp->recent_bytes;
+
+	// Start a new "recent" period.
+	bp->recent_start = dltime;
+	bp->recent_bytes = 0;
+
+	// Advance the current ring position.
+	if (++hist->pos == SPEED_HISTORY_SIZE)
+		hist->pos = 0;
+}
+
+// This updates the progress bar as well as the data displayed on it so that we can
+// display percentage completed, rate of transfer and estimated remaining duration.
+// During init (op = OP_INIT) an optional HWND can be passed on which to look for
+// a progress bar. Part of the code (eta, speed) comes from GNU wget.
+void UpdateProgressWithInfo(int op, int msg, uint64_t processed, uint64_t total)
+{
+	static int last_update_progress_type = UPT_PERCENT;
+	static struct bar_progress bp = { 0 };
+	HWND hProgressDialog = (HWND)(uintptr_t)processed;
+	static HWND hProgressBar = NULL;
+	static uint64_t start_time = 0, last_refresh = 0;
+	uint64_t speed = 0, current_time = GetTickCount64();
+	double percent = 0.0;
+	char msg_data[128];
+	static BOOL bNoAltMode = FALSE;
+
+	if (op == OP_INIT) {
+		start_time = current_time - 1;
+		last_refresh = 0;
+		last_update_progress_type = UPT_PERCENT;
+		percent = 0.0f;
+		speed = 0;
+		memset(&bp, 0, sizeof(bp));
+		bp.total_length = total;
+		hProgressBar = NULL;
+		bNoAltMode = (BOOL)msg;
+		if (hProgressDialog != NULL) {
+			// Use the progress control provided, if any
+			hProgressBar = GetDlgItem(hProgressDialog, IDC_PROGRESS);
+			if (hProgressBar != NULL) {
+				SendMessage(hProgressBar, PBM_SETSTATE, (WPARAM)PBST_NORMAL, 0);
+				SendMessage(hProgressBar, PBM_SETMARQUEE, FALSE, 0);
+				SendMessage(hProgressBar, PBM_SETPOS, 0, 0);
+			}
+			SendMessage(hProgressDialog, UM_PROGRESS_INIT, 0, 0);
+		}
+	} else if ((hProgressBar != NULL) || (op > 0)) {
+		uint64_t dl_total_time = current_time - start_time;
+		uint64_t howmuch = processed - bp.count;
+		bp.count = processed;
+		bp.total_length = total;
+		if (bp.count > bp.total_length)
+			bp.total_length = bp.count;
+		if (bp.total_length > 0)
+			percent = (100.0f * bp.count) / (1.0f * bp.total_length);
+		else
+			percent = 0.0f;
+
+		if ((bp.hist.total_time > 999) && (bp.hist.total_bytes != 0)) {
+			// Calculate the download speed using the history ring and
+			// recent data that hasn't made it to the ring yet.
+			uint64_t dlquant = bp.hist.total_bytes + bp.recent_bytes;
+			uint64_t dltime = bp.hist.total_time + (dl_total_time - bp.recent_start);
+			speed = (dltime == 0) ? 0 : (dlquant * 1000) / dltime;
+		} else {
+			speed = 0;
+		}
+		bar_update(&bp, howmuch, dl_total_time);
+
+		if (bNoAltMode)
+			update_progress_type = UPT_PERCENT;
+		switch (update_progress_type) {
+		case UPT_SPEED:
+			if (speed != 0)
+				static_sprintf(msg_data, "%s/s", SizeToHumanReadable(speed, FALSE, FALSE));
+			else
+				static_sprintf(msg_data, "---");
+			break;
+		case UPT_ETA:
+			if ((bp.total_length > 0) && (bp.count > 0) && (dl_total_time > 3000)) {
+				uint32_t eta = 0;
+
+				// Don't change the value of ETA more than approximately once
+				// per second; doing so would cause flashing without providing
+				// any value to the user.
+				if ((bp.total_length != processed) && (bp.last_eta_value != 0) &&
+					(dl_total_time - bp.last_eta_time < ETA_REFRESH_INTERVAL)) {
+					eta = bp.last_eta_value;
+				} else {
+					// Calculate ETA using the average download speed to predict
+					// the future speed. If you want to use a speed averaged
+					// over a more recent period, replace dl_total_time with
+					// hist->total_time and bp->count with hist->total_bytes.
+					// I found that doing that results in a very jerky and
+					// ultimately unreliable ETA.
+					uint64_t bytes_remaining = bp.total_length - processed;
+					double d_eta = (dl_total_time / 1000.0) * (bytes_remaining * 1.0) / (bp.count * 1.0);
+					if (d_eta >= INT_MAX - 1)
+						goto skip_eta;
+					eta = (uint32_t)(d_eta + 0.5);
+					bp.last_eta_value = eta;
+					bp.last_eta_time = dl_total_time;
+				}
+				static_sprintf(msg_data, "%d:%02d:%02d", eta / 3600, (uint16_t)((eta % 3600) / 60), (uint16_t)(eta % 60));
+			} else {
+			skip_eta:
+				static_sprintf(msg_data, "-:--:--");
+			}
+			break;
+		default:
+			static_sprintf(msg_data, "%0.1f%%", percent);
+			break;
+		}
+		if ((bp.count == bp.total_length) || (current_time > last_refresh + MAX_REFRESH)) {
+			if (op < 0) {
+				SendMessage(hProgressBar, PBM_SETPOS, (WPARAM)(MAX_PROGRESS * percent / 100.0f), 0);
+				if (op == OP_NOOP_WITH_TASKBAR)
+					SetTaskbarProgressValue((ULONGLONG)(MAX_PROGRESS * percent / 100.0f), MAX_PROGRESS);
+			} else {
+				UpdateProgress(op, (float)percent);
+			}
+			if ((msg >= 0) && ((current_time > bp.last_screen_update + SCREEN_REFRESH_INTERVAL) ||
+				(last_update_progress_type != update_progress_type) || (bp.count == bp.total_length))) {
+				PrintInfo(0, msg, msg_data);
+				bp.last_screen_update = current_time;
+			}
+			last_refresh = current_time;
+		}
+		last_update_progress_type = update_progress_type;
 	}
 }
 

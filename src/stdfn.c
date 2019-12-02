@@ -1,7 +1,7 @@
 /*
  * Rufus: The Reliable USB Formatting Utility
  * Standard Windows function calls
- * Copyright © 2013-2017 Pete Batard <pete@akeo.ie>
+ * Copyright © 2013-2019 Pete Batard <pete@akeo.ie>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 
 #include <windows.h>
 #include <sddl.h>
+#include <gpedit.h>
 
 #include "rufus.h"
 #include "missing.h"
@@ -230,13 +231,31 @@ BOOL is_x64(void)
 	return ret;
 }
 
+int GetCpuArch(void)
+{
+	SYSTEM_INFO info = { 0 };
+	GetNativeSystemInfo(&info);
+	switch (info.wProcessorArchitecture) {
+	case PROCESSOR_ARCHITECTURE_AMD64:
+		return CPU_ARCH_X86_64;
+	case PROCESSOR_ARCHITECTURE_INTEL:
+		return CPU_ARCH_X86_64;
+	case PROCESSOR_ARCHITECTURE_ARM64:
+		return CPU_ARCH_ARM_64;
+	case PROCESSOR_ARCHITECTURE_ARM:
+		return CPU_ARCH_ARM_32;
+	default:
+		return CPU_ARCH_UNDEFINED;
+	}
+}
+
 // From smartmontools os_win32.cpp
 void GetWindowsVersion(void)
 {
 	OSVERSIONINFOEXA vi, vi2;
 	const char* w = 0;
 	const char* w64 = "32 bit";
-	char *vptr, build_number[10] = "";
+	char *vptr;
 	size_t vlen;
 	unsigned major, minor;
 	ULONGLONG major_equal, minor_equal;
@@ -332,17 +351,17 @@ void GetWindowsVersion(void)
 	else
 		safe_sprintf(vptr, vlen, "%s %s", w, w64);
 
-	// Add the build number for Windows 8.0 and later
+	// Add the build number (including UBR if available) for Windows 8.0 and later
+	nWindowsBuildNumber = vi.dwBuildNumber;
 	if (nWindowsVersion >= 0x62) {
-		GetRegistryKeyStr(REGKEY_HKLM, "Microsoft\\Windows NT\\CurrentVersion\\CurrentBuildNumber", build_number, sizeof(build_number));
-		if (build_number[0] != 0) {
-			nWindowsBuildNumber = atoi(build_number);	// Keep a global copy
-			static_strcat(WindowsVersionStr, " (Build ");
-			static_strcat(WindowsVersionStr, build_number);
-			static_strcat(WindowsVersionStr, ")");
-		}
+		int nUbr = ReadRegistryKey32(REGKEY_HKLM, "Software\\Microsoft\\Windows NT\\CurrentVersion\\UBR");
+		vptr = &WindowsVersionStr[safe_strlen(WindowsVersionStr)];
+		vlen = sizeof(WindowsVersionStr) - safe_strlen(WindowsVersionStr) - 1;
+		if (nUbr > 0)
+			safe_sprintf(vptr, vlen, " (Build %d.%d)", nWindowsBuildNumber, nUbr);
+		else
+			safe_sprintf(vptr, vlen, " (Build %d)", nWindowsBuildNumber);
 	}
-
 }
 
 /*
@@ -575,26 +594,23 @@ DWORD RunCommand(const char* cmd, const char* dir, BOOL log)
 	DWORD ret, dwRead, dwAvail, dwPipeSize = 4096;
 	STARTUPINFOA si = {0};
 	PROCESS_INFORMATION pi = {0};
+	SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
 	HANDLE hOutputRead = INVALID_HANDLE_VALUE, hOutputWrite = INVALID_HANDLE_VALUE;
-	HANDLE hDupOutputWrite = INVALID_HANDLE_VALUE;
 	static char* output;
 
 	si.cb = sizeof(si);
 	if (log) {
 		// NB: The size of a pipe is a suggestion, NOT an absolute guarantee
 		// This means that you may get a pipe of 4K even if you requested 1K
-		if (!CreatePipe(&hOutputRead, &hOutputWrite, NULL, dwPipeSize)) {
+		if (!CreatePipe(&hOutputRead, &hOutputWrite, &sa, dwPipeSize)) {
 			ret = GetLastError();
 			uprintf("Could not set commandline pipe: %s", WindowsErrorString());
 			goto out;
 		}
-		// We need an inheritable pipe endpoint handle
-		DuplicateHandle(GetCurrentProcess(), hOutputWrite, GetCurrentProcess(), &hDupOutputWrite,
-			0L, TRUE, DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS);
-		si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+		si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES | STARTF_PREVENTPINNING | STARTF_TITLEISAPPID;
 		si.wShowWindow = SW_HIDE;
-		si.hStdOutput = hDupOutputWrite;
-		si.hStdError = hDupOutputWrite;
+		si.hStdOutput = hOutputWrite;
+		si.hStdError = hOutputWrite;
 	}
 
 	if (!CreateProcessU(NULL, cmd, NULL, NULL, TRUE,
@@ -632,7 +648,7 @@ DWORD RunCommand(const char* cmd, const char* dir, BOOL log)
 	CloseHandle(pi.hThread);
 
 out:
-	safe_closehandle(hDupOutputWrite);
+	safe_closehandle(hOutputWrite);
 	safe_closehandle(hOutputRead);
 	return ret;
 }
@@ -672,40 +688,6 @@ BOOL IsFontAvailable(const char* font_name)
 /*
  * Set or restore a Local Group Policy DWORD key indexed by szPath/SzPolicy
  */
-#pragma push_macro("INTERFACE")
-#undef  INTERFACE
-#define INTERFACE IGroupPolicyObject
-#define REGISTRY_EXTENSION_GUID { 0x35378EACL, 0x683F, 0x11D2, {0xA8, 0x9A, 0x00, 0xC0, 0x4F, 0xBB, 0xCF, 0xA2} }
-#define GPO_OPEN_LOAD_REGISTRY  1
-#define GPO_SECTION_MACHINE     2
-typedef enum _GROUP_POLICY_OBJECT_TYPE {
-	GPOTypeLocal = 0, GPOTypeRemote, GPOTypeDS
-} GROUP_POLICY_OBJECT_TYPE, *PGROUP_POLICY_OBJECT_TYPE;
-DECLARE_INTERFACE_(IGroupPolicyObject, IUnknown) {
-	STDMETHOD(QueryInterface) (THIS_ REFIID riid, LPVOID *ppvObj) PURE;
-	STDMETHOD_(ULONG, AddRef) (THIS) PURE;
-	STDMETHOD_(ULONG, Release) (THIS) PURE;
-	STDMETHOD(New) (THIS_ LPOLESTR pszDomainName, LPOLESTR pszDisplayName, DWORD dwFlags) PURE;
-	STDMETHOD(OpenDSGPO) (THIS_ LPOLESTR pszPath, DWORD dwFlags) PURE;
-	STDMETHOD(OpenLocalMachineGPO) (THIS_ DWORD dwFlags) PURE;
-	STDMETHOD(OpenRemoteMachineGPO) (THIS_ LPOLESTR pszComputerName, DWORD dwFlags) PURE;
-	STDMETHOD(Save) (THIS_ BOOL bMachine, BOOL bAdd,GUID *pGuidExtension, GUID *pGuid) PURE;
-	STDMETHOD(Delete) (THIS) PURE;
-	STDMETHOD(GetName) (THIS_ LPOLESTR pszName, int cchMaxLength) PURE;
-	STDMETHOD(GetDisplayName) (THIS_ LPOLESTR pszName, int cchMaxLength) PURE;
-	STDMETHOD(SetDisplayName) (THIS_ LPOLESTR pszName) PURE;
-	STDMETHOD(GetPath) (THIS_ LPOLESTR pszPath, int cchMaxPath) PURE;
-	STDMETHOD(GetDSPath) (THIS_ DWORD dwSection, LPOLESTR pszPath ,int cchMaxPath) PURE;
-	STDMETHOD(GetFileSysPath) (THIS_ DWORD dwSection, LPOLESTR pszPath, int cchMaxPath) PURE;
-	STDMETHOD(GetRegistryKey) (THIS_ DWORD dwSection, HKEY *hKey) PURE;
-	STDMETHOD(GetOptions) (THIS_ DWORD *dwOptions) PURE;
-	STDMETHOD(SetOptions) (THIS_ DWORD dwOptions, DWORD dwMask) PURE;
-	STDMETHOD(GetType) (THIS_ GROUP_POLICY_OBJECT_TYPE *gpoType) PURE;
-	STDMETHOD(GetMachineName) (THIS_ LPOLESTR pszName, int cchMaxLength) PURE;
-	STDMETHOD(GetPropertySheetPages) (THIS_ HPROPSHEETPAGE **hPages, UINT *uPageCount) PURE;
-};
-typedef IGroupPolicyObject *LPGROUPPOLICYOBJECT;
-
 // I've seen rare cases where pLGPO->lpVtbl->Save(...) gets stuck, which prevents the
 // application from launching altogether. To alleviate this, use a thread that we can
 // terminate if needed...
@@ -727,7 +709,7 @@ DWORD WINAPI SetLGPThread(LPVOID param)
 	// Along with global 'existing_key', this static value is used to restore initial state
 	static DWORD original_val;
 	HKEY path_key = NULL, policy_key = NULL;
-	// MSVC is finicky about these ones => redefine them
+	// MSVC is finicky about these ones even if you link against gpedit.lib => redefine them
 	const IID my_IID_IGroupPolicyObject =
 		{ 0xea502723L, 0xa23d, 0x11d1, { 0xa7, 0xd3, 0x0, 0x0, 0xf8, 0x75, 0x71, 0xe3 } };
 	const IID my_CLSID_GroupPolicyObject =
@@ -758,7 +740,6 @@ DWORD WINAPI SetLGPThread(LPVOID param)
 		goto error;
 	}
 
-	// The DisableSystemRestore is set in Software\Policies\Microsoft\Windows\DeviceInstall\Settings
 	r = RegCreateKeyExA(path_key, p->szPath, 0, NULL, 0, KEY_SET_VALUE | KEY_QUERY_VALUE,
 		NULL, &policy_key, &disp);
 	if (r != ERROR_SUCCESS) {
@@ -816,7 +797,6 @@ error:
 		pLGPO->lpVtbl->Release(pLGPO);
 	return FALSE;
 }
-#pragma pop_macro("INTERFACE")
 
 BOOL SetLGP(BOOL bRestore, BOOL* bExistingKey, const char* szPath, const char* szPolicy, DWORD dwValue)
 {
@@ -930,36 +910,4 @@ char* GetCurrentMUI(void)
 		static_strcpy(mui_str, "en-US");
 	}
 	return mui_str;
-}
-
-char* GetMuiString(char* szModuleName, UINT uID)
-{
-	HMODULE hModule;
-	char path[MAX_PATH], *str;
-	wchar_t* wstr;
-	void* ptr;
-	int len;
-	static_sprintf(path, "%s\\%s\\%s.mui", system_dir, GetCurrentMUI(), szModuleName);
-	// If the file doesn't exist, fall back to en-US
-	if (!PathFileExistsU(path))
-		static_sprintf(path, "%s\\en-US\\%s.mui", system_dir, szModuleName);
-	hModule = LoadLibraryExA(path, NULL, LOAD_LIBRARY_AS_IMAGE_RESOURCE | LOAD_LIBRARY_AS_DATAFILE);
-	if (hModule == NULL) {
-		uprintf("Could not load '%s': %s", path, WindowsErrorString());
-		return NULL;
-	}
-	// Calling LoadStringW with last parameter 0 returns the length of the string (without NUL terminator)
-	len = LoadStringW(hModule, uID, (LPWSTR)(&ptr), 0);
-	if (len <= 0) {
-		if (GetLastError() == ERROR_SUCCESS)
-			SetLastError(ERROR_RESOURCE_NAME_NOT_FOUND);
-		uprintf("Could not find string ID %d in '%s': %s", uID, path, WindowsErrorString());
-		return NULL;
-	}
-	len += 1;
-	wstr = calloc(len, sizeof(wchar_t));
-	len = LoadStringW(hModule, uID, wstr, len);
-	str = wchar_to_utf8(wstr);
-	free(wstr);
-	return str;
 }

@@ -86,8 +86,9 @@ typedef struct vhd_footer {
 #pragma pack(pop)
 
 // WIM API Prototypes
-#define WIM_GENERIC_READ	GENERIC_READ
-#define WIM_OPEN_EXISTING	OPEN_EXISTING
+#define WIM_GENERIC_READ            GENERIC_READ
+#define WIM_OPEN_EXISTING           OPEN_EXISTING
+#define WIM_UNDOCUMENTED_BULLSHIT   0x20000000
 PF_TYPE_DECL(WINAPI, HANDLE, WIMCreateFile, (PWSTR, DWORD, DWORD, DWORD, DWORD, PDWORD));
 PF_TYPE_DECL(WINAPI, BOOL, WIMSetTemporaryPath, (HANDLE, PWSTR));
 PF_TYPE_DECL(WINAPI, HANDLE, WIMLoadImage, (HANDLE, DWORD));
@@ -99,12 +100,12 @@ PF_TYPE_DECL(WINAPI, DWORD, WIMRegisterMessageCallback, (HANDLE, FARPROC, PVOID)
 PF_TYPE_DECL(WINAPI, DWORD, WIMUnregisterMessageCallback, (HANDLE, FARPROC));
 PF_TYPE_DECL(RPC_ENTRY, RPC_STATUS, UuidCreate, (UUID __RPC_FAR*));
 
+uint32_t wim_nb_files, wim_proc_files, wim_extra_files;
+
 static uint8_t wim_flags = 0;
 static char sevenzip_path[MAX_PATH];
 static const char conectix_str[] = VHD_FOOTER_COOKIE;
-static uint32_t wim_nb_files, wim_proc_files;
 static BOOL count_files;
-static uint64_t LastRefresh;
 
 static BOOL Get7ZipPath(void)
 {
@@ -287,7 +288,7 @@ BOOL IsBootableImage(const char* path)
 
 	is_bootable_img = (BOOLEAN)IsCompressedBootableImage(path);
 	if (img_report.compression_type == BLED_COMPRESSION_NONE)
-		is_bootable_img = (BOOLEAN)AnalyzeMBR(handle, "  Image");
+		is_bootable_img = (BOOLEAN)AnalyzeMBR(handle, "  Image", FALSE);
 
 	if (!GetFileSizeEx(handle, &liImageSize)) {
 		uprintf("  Could not get image size: %s", WindowsErrorString());
@@ -396,7 +397,12 @@ BOOL WimExtractFile_API(const char* image, int index, const char* src, const cha
 		goto out;
 	}
 
-	hWim = pfWIMCreateFile(wimage, WIM_GENERIC_READ, WIM_OPEN_EXISTING, 0, 0, &dw);
+	// Thanks to dism++ for figuring out that you can use UNDOCUMENTED FLAG 0x20000000
+	// to open newer install.wim/install.esd images, without running into obnoxious error:
+	// [0x0000000B] An attempt was made to load a program with an incorrect format.
+	// No thanks to Microsoft for NOT DOCUMENTING THEIR UTTER BULLSHIT with the WIM API!
+	hWim = pfWIMCreateFile(wimage, WIM_GENERIC_READ, WIM_OPEN_EXISTING,
+		(img_report.wininst_version >= SPECIAL_WIM_VERSION) ? WIM_UNDOCUMENTED_BULLSHIT : 0, 0, NULL);
 	if (hWim == NULL) {
 		uprintf("  Could not access image: %s", WindowsErrorString());
 		goto out;
@@ -564,10 +570,8 @@ DWORD WINAPI WimProgressCallback(DWORD dwMsgId, WPARAM wParam, LPARAM lParam, PV
 {
 	PBOOL pbCancel = NULL;
 	PWIN32_FIND_DATA pFileData;
-	char* str = NULL;
 	const char* level = NULL;
 	uint64_t size;
-	float apply_percent;
 
 	switch (dwMsgId) {
 	case WIM_MSG_PROGRESS:
@@ -575,34 +579,26 @@ DWORD WINAPI WimProgressCallback(DWORD dwMsgId, WPARAM wParam, LPARAM lParam, PV
 		// the files have been processed), so we don't use it
 #if 0
 		PrintInfo(0, MSG_267, (DWORD)wParam);
-		UpdateProgress(OP_DOS, 0.98f*(DWORD)wParam);
+		UpdateProgress(OP_FILE_COPY, 0.98f*(DWORD)wParam);
 #endif
 		break;
 	case WIM_MSG_PROCESS:
 		// The amount of files processed is overwhelming (16k+ for a typical image),
 		// and trying to display it *WILL* slow us down, so we don't.
 #if 0
-		str = wchar_to_utf8((PWSTR)wParam);
-		uprintf("%s", str);
+		uprintf("%S", (PWSTR)wParam);
 		PrintStatus(0, MSG_000, str);	// MSG_000 is "%s"
 #endif
 		if (count_files) {
 			wim_nb_files++;
 		} else {
-			wim_proc_files++;
-			if (GetTickCount64() > LastRefresh + 100) {
-				// At the end of an actual apply, the WIM API re-lists a bunch of directories it
-				// already processed, so we end up with more entries than counted - ignore those.
-				if (wim_proc_files > wim_nb_files)
-					wim_proc_files = wim_nb_files;
-				LastRefresh = GetTickCount64();
-				// x^3 progress, so as not to give a better idea right from the onset
-				// as to the dismal speed with which the WIM API can actually apply files...
-				apply_percent = 4.636942595f * ((float)wim_proc_files) / ((float)wim_nb_files);
-				apply_percent = apply_percent * apply_percent * apply_percent;
-				PrintInfo(0, MSG_267, apply_percent);
-				UpdateProgress(OP_DOS, apply_percent);
-			}
+			// At the end of an actual apply, the WIM API re-lists a bunch of directories it already processed,
+			// so, even as we try to compensate, we might end up with more entries than counted - ignore those.
+			if (wim_proc_files < wim_nb_files)
+				wim_proc_files++;
+			else
+				wim_extra_files++;
+			UpdateProgressWithInfo(OP_FILE_COPY, MSG_267, wim_proc_files, wim_nb_files);
 		}
 		// Halt on error
 		if (IS_ERROR(FormatStatus)) {
@@ -612,13 +608,12 @@ DWORD WINAPI WimProgressCallback(DWORD dwMsgId, WPARAM wParam, LPARAM lParam, PV
 		}
 		break;
 	case WIM_MSG_FILEINFO:
-		str = wchar_to_utf8((PWSTR)wParam);
 		pFileData = (PWIN32_FIND_DATA)lParam;
 		if (pFileData->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-			uprintf("Creating: %s", str);
+			uprintf("Creating: %S", (PWSTR)wParam);
 		} else {
 			size = (((uint64_t)pFileData->nFileSizeHigh) << 32) + pFileData->nFileSizeLow;
-			uprintf("Extracting: %s (%s)", str, SizeToHumanReadable(size, FALSE, FALSE));
+			uprintf("Extracting: %S (%s)", (PWSTR)wParam, SizeToHumanReadable(size, FALSE, FALSE));
 		}
 		break;
 	case WIM_MSG_RETRY:
@@ -632,12 +627,10 @@ DWORD WINAPI WimProgressCallback(DWORD dwMsgId, WPARAM wParam, LPARAM lParam, PV
 		// fall through
 	case WIM_MSG_ERROR:
 		if (level == NULL) level = "error";
-		str = wchar_to_utf8((PWSTR)wParam);
 		SetLastError((DWORD)lParam);
-		uprintf("Apply %s: %s [err = %d]\n", level, str, WindowsErrorString());
+		uprintf("Apply %s: %S [err = %d]\n", level, (PWSTR)wParam, WindowsErrorString());
 		break;
 	}
-	safe_free(str);
 
 	return IS_ERROR(FormatStatus)?WIM_MSG_ABORT_IMAGE:WIM_MSG_SUCCESS;
 }
@@ -648,7 +641,6 @@ DWORD WINAPI WimProgressCallback(DWORD dwMsgId, WPARAM wParam, LPARAM lParam, PV
 static DWORD WINAPI WimApplyImageThread(LPVOID param)
 {
 	BOOL r = FALSE;
-	DWORD dw = 0;
 	HANDLE hWim = NULL;
 	HANDLE hImage = NULL;
 	wchar_t wtemp[MAX_PATH] = {0};
@@ -675,7 +667,8 @@ static DWORD WINAPI WimApplyImageThread(LPVOID param)
 		goto out;
 	}
 
-	hWim = pfWIMCreateFile(wimage, WIM_GENERIC_READ, WIM_OPEN_EXISTING, 0, 0, &dw);
+	hWim = pfWIMCreateFile(wimage, WIM_GENERIC_READ, WIM_OPEN_EXISTING,
+		(img_report.wininst_version >= SPECIAL_WIM_VERSION) ? WIM_UNDOCUMENTED_BULLSHIT : 0, 0, NULL);
 	if (hWim == NULL) {
 		uprintf("  Could not access image: %s", WindowsErrorString());
 		goto out;
@@ -696,20 +689,30 @@ static DWORD WINAPI WimApplyImageThread(LPVOID param)
 	// Run a first pass using WIM_FLAG_NO_APPLY to count the files
 	wim_nb_files = 0;
 	wim_proc_files = 0;
-	LastRefresh = 0;
+	wim_extra_files = 0;
 	count_files = TRUE;
 	if (!pfWIMApplyImage(hImage, wdst, WIM_FLAG_NO_APPLY)) {
 		uprintf("  Could not count the files to apply: %s", WindowsErrorString());
 		goto out;
 	}
+	// The latest Windows 10 ISOs have a ~17.5% discrepancy between the number of
+	// files and directories actually applied vs. the ones counted when not applying.
+	// Therefore, we add a 'safe' 20% to our counted files to compensate for yet
+	// another dismal Microsoft progress reporting API...
+	wim_nb_files += wim_nb_files / 5;
 	count_files = FALSE;
 	// Actual apply
 	if (!pfWIMApplyImage(hImage, wdst, WIM_FLAG_FILEINFO)) {
 		uprintf("  Could not apply image: %s", WindowsErrorString());
 		goto out;
 	}
-	PrintInfo(0, MSG_267, 99.8f);
-	UpdateProgress(OP_DOS, 99.8f);
+	// Ensure that we'll pick if need to readjust our 20% above from user reports
+	if (wim_extra_files > 0)
+		uprintf("Notice: An extra %d files and directories were applied, from the %d expected",
+			wim_extra_files, wim_nb_files);
+	// Re-use extra files as the final progress step
+	wim_extra_files = (wim_nb_files - wim_proc_files) / 3;
+	UpdateProgressWithInfo(OP_FILE_COPY, MSG_267, wim_proc_files + wim_extra_files, wim_nb_files);
 	r = TRUE;
 
 out:

@@ -1,7 +1,7 @@
 ﻿/*
  * Rufus: The Reliable USB Formatting Utility
  * Poedit <-> rufus.loc conversion utility
- * Copyright © 2018 Pete Batard <pete@akeo.ie>
+ * Copyright © 2018-2019 Pete Batard <pete@akeo.ie>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,7 +43,7 @@ using System.Windows.Forms;
 [assembly: AssemblyProduct("Pollock")]
 [assembly: AssemblyCopyright("Copyright © 2018 Pete Batard <pete@akeo.ie>")]
 [assembly: AssemblyTrademark("GNU GPLv3")]
-[assembly: AssemblyVersion("1.1.*")]
+[assembly: AssemblyVersion("1.3.*")]
 
 namespace pollock
 {
@@ -744,45 +744,6 @@ namespace pollock
         }
 
         /// <summary>
-        /// Validate a download URL by checking its HTTP status code.
-        /// </summary>
-        /// <param name="url">The URL to validate.</param>
-        /// <returns>true if URL is acessible, false on error.</returns>
-        static bool ValidateDownload(string url)
-        {
-            HttpStatusCode status = HttpStatusCode.InternalServerError;
-            var uri = new Uri(url);
-            WebRequest request = WebRequest.Create(uri);
-            request.CachePolicy = new RequestCachePolicy(RequestCacheLevel.NoCacheNoStore);
-            request.Method = "HEAD";
-
-            // This is soooooooo retarded. Trying to simply read a 404 response throws a 404 *exception*?!?
-            try
-            {
-                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-                    status = response.StatusCode;
-            }
-            catch (WebException we)
-            {
-                HttpWebResponse response = we.Response as HttpWebResponse;
-                if (response != null)
-                {
-                    status = response.StatusCode;
-                    response.Close();
-                }
-            }
-            request.Abort();
-            switch (status)
-            {
-                case HttpStatusCode.OK:
-                    return true;
-                default:
-                    Console.WriteLine($"Error downloading {url}: {(int)status} - {status}");
-                    return false;
-            }
-        }
-
-        /// <summary>
         /// Download a file as a string. Codepage is assumed to be UTF-8.
         /// </summary>
         /// <param name="url">The URL to download from.</param>
@@ -790,9 +751,6 @@ namespace pollock
         static string DownloadString(string url)
         {
             string str = null;
-
-            if (!ValidateDownload(url))
-                return null;
 
             using (WebClient wc = new WebClient())
             {
@@ -824,9 +782,6 @@ namespace pollock
 
             if (dest == null)
                 dest = url.Split('/').Last();
-
-            if (!ValidateDownload(url))
-                return false;
 
             console_x_pos = Console.CursorLeft;
             using (WebClient wc = new WebClient())
@@ -1103,7 +1058,7 @@ namespace pollock
             }
             else
             {
-                var local_loc = @"C:\rufus\res\loc\rufus.loc";
+                var local_loc = @"C:\Projects\rufus\res\loc\rufus.loc";
                 Console.Write($"Copying loc file from '{local_loc}'... ");
                 File.Copy(local_loc, "rufus.loc", true);
             }
@@ -1137,9 +1092,15 @@ Menu:
             for (int i = 1; i < split + 1; i++)
             {
                 name = $"{list[i][0]} ({list[i][1]})";
-                Console.Write($"[{i.ToString("00")}] {name,-29} {$"(v{list[i][2]})",-7}");
-                name = $"{list[i + split][0]} ({list[i + split][1]})";
-                Console.WriteLine($"  |  [{(i + split).ToString("00")}] {name,-29} {$"(v{list[i + split][2]})",-7}");
+                Console.Write($"[{i.ToString("00")}] {name,-29} {$"(v{list[i][2]})",-7}  |  ");
+                if ((i + split) < list.Count)
+                {
+                    name = $"{list[i + split][0]} ({list[i + split][1]})";
+                    Console.WriteLine($"[{(i + split).ToString("00")}] {name,-29} {$"(v{list[i + split][2]})",-7}");
+                } else
+                {
+                    Console.WriteLine();
+                }
             }
             Console.WriteLine();
 
@@ -1189,9 +1150,7 @@ Retry:
                     if (str == null)
                         goto Exit;
                     var sha = str.Substring(str.IndexOf("/pbatard/rufus/commit/") + 22, 40);
-                    // TODO: Remove this once everyone has upgraded past 3.2
-                    string loc_dir = ((list[index][2][0] == '2') || ((list[index][2][0] == '3') && (list[index][2][2] == '0'))) ? "localization" : "loc";
-                    url = "https://github.com/pbatard/rufus/raw/" + sha + "/res/" + loc_dir + "/rufus.loc";
+                    url = "https://github.com/pbatard/rufus/raw/" + sha + "/res/loc/rufus.loc";
                     if (!DownloadFile(url, old_loc_file))
                         goto Exit;
                 }

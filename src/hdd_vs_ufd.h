@@ -1,7 +1,7 @@
 /*
  * Rufus: The Reliable USB Formatting Utility
  * SMART HDD vs Flash detection - isHDD() tables
- * Copyright © 2013-2014 Pete Batard <pete@akeo.ie>
+ * Copyright © 2013-2019 Pete Batard <pete@akeo.ie>
  *
  * Based in part on drivedb.h from Smartmontools:
  * http://svn.code.sf.net/p/smartmontools/code/trunk/smartmontools/drivedb.h
@@ -246,21 +246,33 @@ static vidpid_score_t vidpid_score[] = {
 	{ 0x04e8, 0x6845, -20 },	// 16 GB UFD
 	{ 0x04e8, 0x685E, -20 },	// 16 GB UFD
 	// Sunplus exceptions
-	{ 0x04fc, 0x05d8, -20 },	// Verbatim flash drive
-	{ 0x04fc, 0x5720, -20 },	// Card reader
+	{ 0x04fc, 0x05d8, -20 },	// Verbatim Flash Drive
+	{ 0x04fc, 0x5720, -20 },	// Card Reader
 	// LaCie exceptions
 	{ 0x059f, 0x1027, -20 },	// 16 GB UFD
 	{ 0x059f, 0x103B, -20 },	// 16 GB UFD
 	{ 0x059f, 0x1064, -20 },	// 16 GB UFD
+	// Apple exceptions
+	{ 0x05ac, 0x8400, -20},
+	{ 0x05ac, 0x8401, -20},
+	{ 0x05ac, 0x8402, -20},
+	{ 0x05ac, 0x8403, -20},
+	{ 0x05ac, 0x8404, -20},
+	{ 0x05ac, 0x8405, -20},
+	{ 0x05ac, 0x8406, -20},
+	{ 0x05ac, 0x8407, -20},
 	// Prolific exceptions
+	{ 0x067b, 0x2506, -20 },	// 8 GB Micro Hard Drive
 	{ 0x067b, 0x2517, -20 },	// 1 GB UFD
 	{ 0x067b, 0x2528, -20 },	// 8 GB UFD
+	{ 0x067b, 0x2731, -20 },	// SD/TF Card Reader
+	{ 0x067b, 0x2733, -20 },	// EAGET Mass Storage USB Device
 	{ 0x067b, 0x3400, -10 },	// Hi-Speed Flash Disk with TruePrint AES3400
 	{ 0x067b, 0x3500, -10 },	// Hi-Speed Flash Disk with TruePrint AES3500
 	// Freecom exceptions
 	{ 0x07ab, 0xfcab, -20 },	// 4 GB UFD
 	// Samsung exceptions
-	{ 0x090c, 0x1000, -20 },	// Samsung Flash drive
+	{ 0x090c, 0x1000, -20 },	// Samsung Flash Drive
 	// Toshiba exceptions
 	{ 0x0930, 0x1400, -20 },
 	{ 0x0930, 0x6533, -20 },
@@ -268,7 +280,9 @@ static vidpid_score_t vidpid_score[] = {
 	{ 0x0930, 0x6544, -20 },
 	{ 0x0930, 0x6545, -20 },
 	// Innostor exceptions
-	{ 0x0BC2, 0x03312, -20 },
+	{ 0x0bc2, 0x3312, -20 },
+	// JMicron exceptions
+	{ 0x152d, 0x0901, -20 },
 	// Verbatim exceptions
 	{ 0x18a5, 0x0243, -20 },
 	{ 0x18a5, 0x0245, -20 },
